@@ -65,15 +65,20 @@ enum kasan_state {
 };
 
 /* TODO: rethink the structs and field sizes */
+#define KASAN_STACK_DEPTH 32
+#define KASAN_STACK_BITS (32)  /* up to 16GB of stack storage */
+typedef u32 kasan_stack_handle;
+
 struct kasan_track {
 	u64 cpu : 6;			/* for NR_CPUS = 64 */
 	u64 pid : 16;			/* 65536 processes */
-	u64 when : 48;			/* ~9000 years */
+	u64 when : 42;			/* ~140 years */
+	kasan_stack_handle stack : KASAN_STACK_BITS;
 };
 
 struct kasan_alloc_meta {
 	enum kasan_state state : 2;
-	size_t alloc_size : 30;
+	u32 alloc_size : 30;
 	struct kasan_track track;
 };
 
@@ -101,5 +106,11 @@ static inline bool kasan_report_enabled(void)
 
 void kasan_report(unsigned long addr, size_t size,
 		bool is_write, unsigned long ip);
+
+struct stack_trace;
+
+kasan_stack_handle kasan_save_stack(struct stack_trace *trace, gfp_t flags);
+
+void kasan_fetch_stack(kasan_stack_handle handle, struct stack_trace *trace);
 
 #endif
