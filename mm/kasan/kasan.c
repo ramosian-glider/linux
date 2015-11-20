@@ -313,6 +313,57 @@ void kasan_free_pages(struct page *page, unsigned int order)
 				KASAN_FREE_PAGE);
 }
 
+#ifdef CONFIG_SLAB
+/*
+ * Adaptive redzone policy taken from the userspace AddressSanitizer runtime.
+ * For larger allocations larger redzones are used.
+ */
+static size_t optimal_redzone(size_t object_size)
+{
+	int rz =
+		object_size <= 64        - 16   ? 16 :
+		object_size <= 128       - 32   ? 32 :
+		object_size <= 512       - 64   ? 64 :
+		object_size <= 4096      - 128  ? 128 :
+		object_size <= (1 << 14) - 256  ? 256 :
+		object_size <= (1 << 15) - 512  ? 512 :
+		object_size <= (1 << 16) - 1024 ? 1024 : 2048;
+	return rz;
+}
+
+void kasan_cache_create(struct kmem_cache *cache, cache_size_t *size,
+			unsigned long *flags)
+{
+	int redzone_adjust;
+
+	if (*flags & (SLAB_POISON)) {
+		/* TODO: consider dropping SLAB_POISON flag instead */
+		pr_warn("SLAB_POISON is set up for cache %s, disabling KASAN\n",
+			cache->name);
+		return;
+	}
+	// TODO: the check below is only useful for SLAB, not SLUB.
+	if (cache->object_size >= 4 << 20) /* TODO: use MAX_ORDER */
+		return;
+	*flags |= SLAB_KASAN;
+	cache->kasan_info.alloc_meta_offset = *size;
+	*size += sizeof(struct kasan_alloc_meta);
+
+	if (cache->flags & SLAB_DESTROY_BY_RCU || cache->ctor ||
+	    cache->object_size <
+	    sizeof(struct kasan_free_meta) + sizeof(void *)) {
+		cache->kasan_info.free_meta_offset = *size;
+		*size += sizeof(struct kasan_free_meta);
+	} else
+		cache->kasan_info.free_meta_offset = 0;
+
+	redzone_adjust = optimal_redzone(cache->object_size) -
+		(*size - cache->object_size);
+	if (redzone_adjust > 0)
+		*size += redzone_adjust;
+}
+#endif
+
 void kasan_poison_slab(struct page *page)
 {
 	kasan_poison_shadow(page_address(page),
@@ -330,11 +381,60 @@ void kasan_poison_object_data(struct kmem_cache *cache, void *object)
 	kasan_poison_shadow(object,
 			round_up(cache->object_size, KASAN_SHADOW_SCALE_SIZE),
 			KASAN_KMALLOC_REDZONE);
+#ifdef CONFIG_SLAB
+	if (cache->flags & SLAB_KASAN) {
+		struct kasan_alloc_meta *alloc_info =
+			get_alloc_info(cache, object);
+		alloc_info->state = KASAN_STATE_INIT;
+	}
+#endif
 }
 
-void kasan_slab_alloc(struct kmem_cache *cache, void *object)
+static inline kasan_stack_handle save_stack(gfp_t flags)
 {
-	kasan_kmalloc(cache, object, cache->object_size);
+	unsigned long entries[KASAN_STACK_DEPTH];
+	struct stack_trace trace = {
+		.nr_entries = 0,
+		.entries = entries,
+		.max_entries = KASAN_STACK_DEPTH,
+		.skip = 0
+	};
+
+	save_stack_trace(&trace);
+	if (trace.nr_entries != 0 &&
+	    trace.entries[trace.nr_entries-1] == ULONG_MAX)
+		trace.nr_entries--;
+
+	return kasan_save_stack(&trace, flags);
+}
+
+static inline void set_track(struct kasan_track *track, gfp_t flags)
+{
+	track->cpu = smp_processor_id();
+	track->pid = current->pid;
+	track->when = jiffies;
+	track->stack = save_stack(flags);
+}
+
+#ifdef CONFIG_SLAB
+struct kasan_alloc_meta *get_alloc_info(struct kmem_cache *cache,
+					const void *object)
+{
+	BUILD_BUG_ON(sizeof(struct kasan_alloc_meta) > 32);
+	return (void *)object + cache->kasan_info.alloc_meta_offset;
+}
+
+struct kasan_free_meta *get_free_info(struct kmem_cache *cache,
+				      const void *object)
+{
+	BUILD_BUG_ON(sizeof(struct kasan_free_meta) > 32);
+	return (void *)object + cache->kasan_info.free_meta_offset;
+}
+#endif
+
+void kasan_slab_alloc(struct kmem_cache *cache, void *object, gfp_t flags)
+{
+	kasan_kmalloc(cache, object, cache->object_size, flags);
 }
 
 void kasan_slab_free(struct kmem_cache *cache, void *object)
@@ -349,7 +449,8 @@ void kasan_slab_free(struct kmem_cache *cache, void *object)
 	kasan_poison_shadow(object, rounded_up_size, KASAN_KMALLOC_FREE);
 }
 
-void kasan_kmalloc(struct kmem_cache *cache, const void *object, size_t size)
+void kasan_kmalloc(struct kmem_cache *cache, const void *object, size_t size,
+		   gfp_t flags)
 {
 	unsigned long redzone_start;
 	unsigned long redzone_end;
@@ -365,10 +466,20 @@ void kasan_kmalloc(struct kmem_cache *cache, const void *object, size_t size)
 	kasan_unpoison_shadow(object, size);
 	kasan_poison_shadow((void *)redzone_start, redzone_end - redzone_start,
 		KASAN_KMALLOC_REDZONE);
+#ifdef CONFIG_SLAB
+	if (cache->flags & SLAB_KASAN) {
+		struct kasan_alloc_meta *alloc_info =
+			get_alloc_info(cache, object);
+
+		alloc_info->state = KASAN_STATE_ALLOC;
+		alloc_info->alloc_size = size;
+		set_track(&alloc_info->track, flags);
+	}
+#endif
 }
 EXPORT_SYMBOL(kasan_kmalloc);
 
-void kasan_kmalloc_large(const void *ptr, size_t size)
+void kasan_kmalloc_large(const void *ptr, size_t size, gfp_t flags)
 {
 	struct page *page;
 	unsigned long redzone_start;
@@ -387,7 +498,7 @@ void kasan_kmalloc_large(const void *ptr, size_t size)
 		KASAN_PAGE_REDZONE);
 }
 
-void kasan_krealloc(const void *object, size_t size)
+void kasan_krealloc(const void *object, size_t size, gfp_t flags)
 {
 	struct page *page;
 
@@ -397,9 +508,9 @@ void kasan_krealloc(const void *object, size_t size)
 	page = virt_to_head_page(object);
 
 	if (unlikely(!PageSlab(page)))
-		kasan_kmalloc_large(object, size);
+		kasan_kmalloc_large(object, size, flags);
 	else
-		kasan_kmalloc(page->slab_cache, object, size);
+		kasan_kmalloc(page->slab_cache, object, size, flags);
 }
 
 void kasan_kfree(void *ptr)
