@@ -430,8 +430,6 @@ void kasan_slab_free(struct kmem_cache *cache, void *object)
 
 void kasan_kmalloc(struct kmem_cache *cache, const void *object, size_t size)
 {
-	if (size == KMALLOC_MAX_CACHE_SIZE + 10)
-		pr_err("kmalloc(%d), KMALLOC_MAX_CACHE_SIZE + 10\n");
 	unsigned long redzone_start;
 	unsigned long redzone_end;
 
