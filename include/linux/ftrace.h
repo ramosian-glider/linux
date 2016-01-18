@@ -762,6 +762,25 @@ struct ftrace_graph_ret {
 typedef void (*trace_func_graph_ret_t)(struct ftrace_graph_ret *); /* return */
 typedef int (*trace_func_graph_ent_t)(struct ftrace_graph_ent *); /* entry */
 
+#if defined(CONFIG_FUNCTION_GRAPH_TRACER) || defined(CONFIG_KASAN)
+/*
+ * We want to know which function is an entrypoint of a hardirq.
+ */
+#define __irq_entry		 __attribute__((__section__(".irqentry.text")))
+#define __softirq_entry  \
+	__attribute__((__section__(".softirqentry.text")))
+
+/* Limits of hardirq entrypoints */
+extern char __irqentry_text_start[];
+extern char __irqentry_text_end[];
+/* Limits of softirq entrypoints */
+extern char __softirqentry_text_start[];
+extern char __softirqentry_text_end[];
+
+#else
+#define __irq_entry
+#endif
+
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 
 /* for init task */
@@ -797,16 +816,6 @@ ftrace_push_return_trace(unsigned long ret, unsigned long func, int *depth,
  * tracer if the function graph tracer is not configured.
  */
 #define __notrace_funcgraph		notrace
-
-/*
- * We want to which function is an entrypoint of a hardirq.
- * That will help us to put a signal on output.
- */
-#define __irq_entry		 __attribute__((__section__(".irqentry.text")))
-
-/* Limits of hardirq entrypoints */
-extern char __irqentry_text_start[];
-extern char __irqentry_text_end[];
 
 #define FTRACE_NOTRACE_DEPTH 65536
 #define FTRACE_RETFUNC_DEPTH 50
@@ -844,7 +853,6 @@ static inline void unpause_graph_tracing(void)
 #else /* !CONFIG_FUNCTION_GRAPH_TRACER */
 
 #define __notrace_funcgraph
-#define __irq_entry
 #define INIT_FTRACE_GRAPH
 
 static inline void ftrace_graph_init_task(struct task_struct *t) { }
