@@ -3961,8 +3961,10 @@ size_t __ksize(const void *object)
 		WARN_ON(!PageCompound(page));
 		return page_size(page);
 	}
+#ifdef CONFIG_KFENCE
 	if (page->slab_cache->flags & SLAB_KFENCE)
 		return kfence_ksize(object);
+#endif
 
 	return slab_ksize(page->slab_cache);
 }

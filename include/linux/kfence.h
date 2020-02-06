@@ -9,19 +9,19 @@ bool kfence_free(struct kmem_cache *s, struct page *page,
 size_t kfence_ksize(void *object);
 
 #else
-void kfence_init(void) {}
-void *kfence_alloc_and_fix_freelist(struct kmem_cache *s)
+static void kfence_init(void) {}
+static void *kfence_alloc_and_fix_freelist(struct kmem_cache *s)
 {
 	return NULL;
 }
-bool kfence_free(struct kmem_cache *s, struct page *page,
+static bool kfence_free(struct kmem_cache *s, struct page *page,
 		 void *head, void *tail, int cnt,
 		 unsigned long addr)
 {
 	return false;
 }
 
-size_t kfence_ksize(void *object)
+static size_t kfence_ksize(void *object)
 {
 	return 0;
 }
