@@ -11,8 +11,34 @@
 static void kfence_heartbeat(struct timer_list *timer);
 static DEFINE_TIMER(kfence_timer, kfence_heartbeat);
 
+struct list_head kfence_freelist;
+
+struct kfence_freelist_t {
+	struct list_head list;
+	void *obj;
+};
+
+#define KFENCE_NUM_OBJ_LOG 8
+#define KFENCE_NUM_OBJ (1 << KFENCE_NUM_OBJ_LOG)
 
 #define KFENCE_SAMPLING_MS 456
+
+void allocate_comb(void)
+{
+	struct page *pages;
+	kfence_freelist_t *objects;
+	char *addr;
+	int i;
+
+	pages = alloc_pages(GFP_KERNEL, KFENCE_NUM_OBJ_LOG + 1);
+	objects = (void **)kmalloc_array(KFENCE_NUM_OBJ, sizeof(kfence_freelist_t), GFP_KERNEL);
+	kfence_freelist.next = objects;
+	for (i = 0; i < KFENCE_NUM_OBJ) {
+		if (i < KFENCE_NUM_OBJ - 1)
+			objects[i].next = objects[i + 1];
+		else	
+	}
+}
 
 DEFINE_PER_CPU(void *, stored_freelist);
 DEFINE_PER_CPU(struct kmem_cache *, stored_cache);
