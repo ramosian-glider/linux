@@ -2857,7 +2857,7 @@ static inline bool want_init_on_alloc(gfp_t flags)
 {
 	if (static_branch_unlikely(&init_on_alloc) &&
 	    !page_poisoning_enabled())
-		return true;
+		return (flags & __GFP_ZERO) || !(flags & ___GFP_NOINIT);
 	return flags & __GFP_ZERO;
 }
 

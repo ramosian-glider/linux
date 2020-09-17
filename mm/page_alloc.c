@@ -77,6 +77,11 @@
 #include "shuffle.h"
 #include "page_reporting.h"
 
+#ifdef MODULE_PARAM_PREFIX
+#undef MODULE_PARAM_PREFIX
+#endif
+#define MODULE_PARAM_PREFIX "page_alloc."
+
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
 static DEFINE_MUTEX(pcp_batch_high_lock);
 #define MIN_PERCPU_PAGELIST_FRACTION	(8)
@@ -186,6 +191,26 @@ static int __init early_init_on_free(char *buf)
 }
 early_param("init_on_free", early_init_on_free);
 
+
+char *skip_zeroing_map[256];
+int skip_zeroing_map_size;
+module_param_array_named(skip_zeroing, skip_zeroing_map, charp, &skip_zeroing_map_size, 0);
+
+bool want_skip_zeroing_for_key(const char *key)
+{
+	int i;
+
+	if (!skip_zeroing_map_size || !static_branch_unlikely(&init_on_alloc))
+		return false;
+	for (i = 0; i < skip_zeroing_map_size; i++) {
+		if (strcmp(skip_zeroing_map[i], key) == 0) {
+			pr_err("will not zero page allocations from %s\n", key);
+			return true;
+		}
+	}
+	pr_err("will zero page allocations from %s\n", key);
+	return false;
+}
 /*
  * A cached value of the page's pageblock's migratetype, used when the page is
  * put on a pcplist. Used to avoid the pageblock migratetype lookup when

@@ -44,6 +44,7 @@ struct vm_area_struct;
 #else
 #define ___GFP_NOLOCKDEP	0
 #endif
+#define ___GFP_NOINIT		0x1000000u
 /* If the above are modified, __GFP_BITS_SHIFT may need updating */
 
 /*
@@ -224,7 +225,7 @@ struct vm_area_struct;
 #define __GFP_NOLOCKDEP ((__force gfp_t)___GFP_NOLOCKDEP)
 
 /* Room for N __GFP_FOO bits */
-#define __GFP_BITS_SHIFT (23 + IS_ENABLED(CONFIG_LOCKDEP))
+#define __GFP_BITS_SHIFT (25)
 #define __GFP_BITS_MASK ((__force gfp_t)((1 << __GFP_BITS_SHIFT) - 1))
 
 /**
@@ -540,7 +541,7 @@ static inline struct page *alloc_pages_node(int nid, gfp_t gfp_mask,
 extern struct page *alloc_pages_current(gfp_t gfp_mask, unsigned order);
 
 static inline struct page *
-alloc_pages(gfp_t gfp_mask, unsigned int order)
+_alloc_pages(gfp_t gfp_mask, unsigned int order)
 {
 	return alloc_pages_current(gfp_mask, order);
 }
@@ -550,7 +551,7 @@ extern struct page *alloc_pages_vma(gfp_t gfp_mask, int order,
 #define alloc_hugepage_vma(gfp_mask, vma, addr, order) \
 	alloc_pages_vma(gfp_mask, order, vma, addr, numa_node_id(), true)
 #else
-#define alloc_pages(gfp_mask, order) \
+#define _alloc_pages(gfp_mask, order) \
 		alloc_pages_node(numa_node_id(), gfp_mask, order)
 #define alloc_pages_vma(gfp_mask, order, vma, addr, node, false)\
 	alloc_pages(gfp_mask, order)
@@ -562,6 +563,27 @@ extern struct page *alloc_pages_vma(gfp_t gfp_mask, int order,
 	alloc_pages_vma(gfp_mask, 0, vma, addr, numa_node_id(), false)
 #define alloc_page_vma_node(gfp_mask, vma, addr, node)		\
 	alloc_pages_vma(gfp_mask, 0, vma, addr, node, false)
+
+extern bool want_skip_zeroing_for_key(const char *key);
+
+#define alloc_pages(gfp_mask, order)			\
+({ 							\
+	struct page *__ret;				\
+	static DEFINE_STATIC_KEY_FALSE(__key);			\
+	static DEFINE_STATIC_KEY_FALSE(__gate);		\
+	gfp_t mask = (gfp_mask);			\
+	if (!static_branch_likely(&__gate)) {		\
+		if (want_skip_zeroing_for_key(__func__))	\
+			static_branch_enable(&__key);	\
+		static_branch_enable(&__gate);	\
+	}					\
+	if (static_branch_unlikely(&__key))	\
+		mask |= ___GFP_NOINIT;		\
+	else					\
+		mask &= ~___GFP_NOINIT;		\
+	__ret = _alloc_pages(mask, order); 		\
+	__ret;						\
+})
 
 extern unsigned long __get_free_pages(gfp_t gfp_mask, unsigned int order);
 extern unsigned long get_zeroed_page(gfp_t gfp_mask);
