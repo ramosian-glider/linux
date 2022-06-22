@@ -41,6 +41,7 @@ typedef struct {
 #ifdef CONFIG_X86_64
 	unsigned short flags;
 	u64 lam_cr3_mask;
+	u64 untag_mask;
 #endif
 
 	struct mutex lock;
