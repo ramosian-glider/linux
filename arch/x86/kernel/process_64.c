@@ -756,12 +756,26 @@ static void enable_lam_func(void *mm)
 	switch_mm(loaded_mm, loaded_mm, current);
 }
 
+static bool lam_u48_allowed(void)
+{
+	struct mm_struct *mm = current->mm;
+
+	if (!full_va_allowed(mm))
+		return true;
+
+	return find_vma(mm, DEFAULT_MAP_WINDOW) == NULL;
+}
+
 static int prctl_enable_tagged_addr(struct mm_struct *mm, unsigned long nr_bits)
 {
 	int ret = 0;
 
 	if (!cpu_feature_enabled(X86_FEATURE_LAM))
 		return -ENODEV;
+
+	/* lam_u48_allowed() requires mmap_lock */
+	if (mmap_write_lock_killable(mm))
+		return -EINTR;
 
 	mutex_lock(&mm->context.lock);
 
@@ -777,6 +791,14 @@ static int prctl_enable_tagged_addr(struct mm_struct *mm, unsigned long nr_bits)
 	} else if (nr_bits <= 6) {
 		mm->context.lam_cr3_mask = X86_CR3_LAM_U57;
 		mm->context.untag_mask =  ~GENMASK(62, 57);
+	} else if (nr_bits <= 15) {
+		if (!lam_u48_allowed()) {
+			ret = -EBUSY;
+			goto out;
+		}
+
+		mm->context.lam_cr3_mask = X86_CR3_LAM_U48;
+		mm->context.untag_mask =  ~GENMASK(62, 48);
 	} else {
 		ret = -EINVAL;
 		goto out;
@@ -788,6 +810,7 @@ static int prctl_enable_tagged_addr(struct mm_struct *mm, unsigned long nr_bits)
 	on_each_cpu_mask(mm_cpumask(mm), enable_lam_func, mm, true);
 out:
 	mutex_unlock(&mm->context.lock);
+	mmap_write_unlock(mm);
 	return ret;
 }
 
