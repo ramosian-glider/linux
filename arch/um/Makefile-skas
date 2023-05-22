@@ -10,3 +10,8 @@ CFLAGS-$(CONFIG_GCOV) += $(GCOV_OPT)
 CFLAGS-$(CONFIG_GPROF) += $(GPROF_OPT)
 LINK-$(CONFIG_GCOV) += $(GCOV_OPT)
 LINK-$(CONFIG_GPROF) += $(GPROF_OPT)
+
+# When building the userspace part, neither CONFIG_ASAN nor -fsanitize=address
+# is being passed to the compiler. Use a custom definition to flag that we are
+# building with ASan.
+CFLAGS-$(CONFIG_ASAN) += -DADDRESS_SANITIZER=1

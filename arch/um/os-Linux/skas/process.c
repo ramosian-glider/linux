@@ -612,11 +612,19 @@ int copy_context_skas0(unsigned long new_stack, int pid)
 	return err;
 }
 
+#ifdef ADDRESS_SANITIZER
+extern void __asan_unpoison_memory_region(void const volatile *addr, size_t size);
+#define asan_unpoison_memory_region(addr, size) __asan_unpoison_memory_region(addr, size)
+#else
+#define asan_unpoison_memory_region(addr, size)
+#endif
+
 void new_thread(void *stack, jmp_buf *buf, void (*handler)(void))
 {
 	(*buf)[0].JB_IP = (unsigned long) handler;
 	(*buf)[0].JB_SP = (unsigned long) stack + UM_THREAD_SIZE -
 		sizeof(void *);
+	asan_unpoison_memory_region(stack, UM_THREAD_SIZE);
 }
 
 #define INIT_JMP_NEW_THREAD 0
