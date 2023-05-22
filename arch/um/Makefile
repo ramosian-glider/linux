@@ -143,6 +143,10 @@ endif
 
 LD_FLAGS_CMDLINE = $(foreach opt,$(KBUILD_LDFLAGS) $(LDFLAGS_EXECSTACK),-Wl,$(opt))
 
+ifeq ($(CONFIG_ASAN),y)
+LD_FLAGS_CMDLINE += -fsanitize=address
+endif
+
 # Used by link-vmlinux.sh which has special support for um link
 export CFLAGS_vmlinux := $(LINK-y) $(LINK_WRAPS) $(LD_FLAGS_CMDLINE) $(CC_FLAGS_LTO)
 

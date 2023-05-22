@@ -36,3 +36,9 @@ config EARLY_PRINTK
 
 	  This is useful for kernel debugging when your machine crashes very
 	  early before the console code is initialized.
+
+config ASAN
+	bool "AddressSanitizer instrumentation"
+	default n
+	help
+	  Userspace AddressSanitizer instrumentation for UML.

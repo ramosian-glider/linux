@@ -164,6 +164,12 @@ _c_flags += $(if $(patsubst n%,, \
 endif
 endif
 
+ifeq ($(CONFIG_ASAN),y)
+_c_flags += $(if $(patsubst n%,, \
+		$(ASAN_SANITIZE_$(basetarget).o)$(ASAN_SANITIZE)y), \
+		$(CFLAGS_ASAN), $(CFLAGS_ASAN_NOSANITIZE))
+endif
+
 ifeq ($(CONFIG_KMSAN),y)
 _c_flags += $(if $(patsubst n%,, \
 		$(KMSAN_SANITIZE_$(basetarget).o)$(KMSAN_SANITIZE)y), \

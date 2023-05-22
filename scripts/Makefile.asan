@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0
+
+# Dummy file to compile Linux kernel with userspace ASan instrumentation.
+# This is intended to be used with UML.
+
+CFLAGS_ASAN_NOSANITIZE :=
+CFLAGS_ASAN := -fsanitize=address -mllvm -asan-globals=0 \
+		-fno-sanitize-address-use-after-scope
+
+export CFLAGS_ASAN CFLAGS_ASAN_NOSANITIZE
