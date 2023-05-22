@@ -343,7 +343,13 @@ void  __init get_host_cpu_features(
 				cache_helper_func(line);
 				done_parsing++;
 			}
+// ASan is unable to intercept malloc() in libc implementation of getline()
+// above, therefore @line is allocated by libc, and ASan reports an error when
+// trying to free it.
+// As a workaround, leak @line for now.
+#ifndef ADDRESS_SANITIZER
 			free(line);
+#endif
 			line = NULL;
 			if (done_parsing > 1)
 				break;
