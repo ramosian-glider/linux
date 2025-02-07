@@ -2135,6 +2135,8 @@ config ARCH_HAS_KCOV
 config CC_HAS_SANCOV_TRACE_PC
 	def_bool $(cc-option,-fsanitize-coverage=trace-pc)
 
+config CC_HAS_SANCOV_TRACE_PC_GUARD
+	def_bool $(cc-option,-fsanitize-coverage=trace-pc-guard)
 
 config KCOV
 	bool "Code coverage for fuzzing"
@@ -2150,6 +2152,20 @@ config KCOV
 	  for coverage-guided fuzzing (randomized testing).
 
 	  For more details, see Documentation/dev-tools/kcov.rst.
+
+config KCOV_ENABLE_GUARDS
+	depends on KCOV
+	depends on CC_HAS_SANCOV_TRACE_PC_GUARD
+	bool "Use fsanitize-coverage=trace-pc-guard for kcov"
+	help
+	  Use coverage guards instrumentation for kcov, passing
+	  -fsanitize-coverage=trace-pc-guard to the compiler.
+
+	  Every coverage callback is associated with a global variable that
+	  allows to efficiently deduplicate coverage at collection time.
+
+	  This comes at a cost of increased binary size (4 bytes of .bss
+	  per basic block, plus 1-2 instructions to pass an extra parameter).
 
 config KCOV_ENABLE_COMPARISONS
 	bool "Enable comparison operands collection by KCOV"
