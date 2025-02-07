@@ -2,7 +2,7 @@
 #ifndef _LINUX_KCOV_H
 #define _LINUX_KCOV_H
 
-#include <linux/sched.h>
+#include <linux/kcov-state.h>
 #include <uapi/linux/kcov.h>
 
 struct task_struct;
@@ -30,14 +30,14 @@ enum kcov_mode {
 void kcov_task_init(struct task_struct *t);
 void kcov_task_exit(struct task_struct *t);
 
-#define kcov_prepare_switch(t)                   \
-	do {                                     \
-		(t)->kcov_mode |= KCOV_IN_CTXSW; \
+#define kcov_prepare_switch(t)                         \
+	do {                                           \
+		(t)->kcov_state.mode |= KCOV_IN_CTXSW; \
 	} while (0)
 
-#define kcov_finish_switch(t)                     \
-	do {                                      \
-		(t)->kcov_mode &= ~KCOV_IN_CTXSW; \
+#define kcov_finish_switch(t)                           \
+	do {                                            \
+		(t)->kcov_state.mode &= ~KCOV_IN_CTXSW; \
 	} while (0)
 
 /* See Documentation/dev-tools/kcov.rst for usage details. */
