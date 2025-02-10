@@ -701,6 +701,60 @@ static int kcov_ioctl_locked(struct kcov *kcov, unsigned int cmd,
 	}
 }
 
+static long kcov_handle_init_buffers(struct kcov *kcov,
+				     __user struct kcov_buf_ctl *uctl)
+{
+	struct kcov_buf_ctl_out ctl_out = { 0 };
+	struct kcov_buf_ctl_in ctl_in;
+	struct kcov_buf_ctl ctl;
+	u32 total_bytes = 0, trace_bytes = 0;
+	unsigned long flags;
+	void *area = NULL;
+
+	if (!uctl)
+		return -EINVAL;
+	if (copy_from_user(&ctl, uctl, sizeof(ctl)))
+		return -EFAULT;
+	if (!ctl.in || !ctl.out)
+		return -EINVAL;
+	if (copy_from_user(&ctl_in, ctl.in, sizeof(ctl_in)))
+		return -EFAULT;
+
+	if (!(ctl_in.buf_flags & KCOV_BUF_CTL_TRACE))
+		return -EINVAL;
+	trace_bytes = ALIGN(ctl_in.trace_size * sizeof(unsigned long),
+			    L1_CACHE_BYTES);
+	ctl_out.trace_size = trace_bytes / sizeof(unsigned long);
+	ctl_out.trace_offset = 0;
+	total_bytes += trace_bytes;
+
+	total_bytes = ALIGN(total_bytes, PAGE_SIZE);
+	ctl_out.alloc_bytes = total_bytes;
+	if (!total_bytes)
+		return -EINVAL;
+	area = vmalloc_user(total_bytes);
+	if (area == NULL)
+		return -ENOMEM;
+	spin_lock_irqsave(&kcov->lock, flags);
+	if (kcov->state.mode != KCOV_MODE_DISABLED) {
+		spin_unlock_irqrestore(&kcov->lock, flags);
+		vfree(area);
+		return -EBUSY;
+	}
+	kcov->state.s.area = area;
+	kcov->state.s.size = total_bytes / sizeof(unsigned long);
+	kcov->state.s.trace = area;
+	kcov->state.s.trace_size = ctl_out.trace_size;
+	kcov->state.mode = KCOV_MODE_INIT;
+	spin_unlock_irqrestore(&kcov->lock, flags);
+
+	if (copy_to_user(ctl.out, &ctl_out, sizeof(ctl_out))) {
+		vfree(area);
+		return -EFAULT;
+	}
+	return 0;
+}
+
 static long kcov_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 {
 	struct kcov *kcov;
@@ -740,6 +794,9 @@ static long kcov_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 		kcov->state.mode = KCOV_MODE_INIT;
 		spin_unlock_irqrestore(&kcov->lock, flags);
 		return 0;
+	case KCOV_INIT_BUFFERS:
+		return kcov_handle_init_buffers(kcov,
+						(struct kcov_buf_ctl *)arg);
 	case KCOV_REMOTE_ENABLE:
 		if (get_user(remote_num_handles,
 			     (unsigned __user *)(arg +
