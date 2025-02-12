@@ -29,6 +29,11 @@
 
 #include <asm/setup.h>
 
+#ifdef CONFIG_KCOV_ENABLE_GUARDS
+atomic_t kcov_guard_max_index = ATOMIC_INIT(1);
+extern u32 __sancov_guards_start, __sancov_guards_end;
+#endif
+
 #define kcov_debug(fmt, ...) pr_debug("%s: " fmt, __func__, ##__VA_ARGS__)
 
 /* Number of 64-bit words written per one comparison: */
@@ -229,14 +234,96 @@ void notrace __sanitizer_cov_trace_pc(void)
 }
 EXPORT_SYMBOL(__sanitizer_cov_trace_pc);
 #else
+
+DEFINE_PER_CPU(u32, saved_index);
+/*
+ * Assign an index to a guard variable that does not have one yet.
+ * For an unlikely case of a race with another task executing the same basic
+ * block, we keep a free index in a per-cpu variable.
+ * In an even less likely case a task can lose a race and get rescheduled onto a
+ * CPU that already has a saved index, discarding that index. This will result
+ * in an unused hole in a bitmap, but such events should not impact the overall
+ * memory consumption.
+ */
+static u32 init_pc_guard(u32 *guard)
+{
+	/* If current CPU has a free index from the previous call, take it. */
+	u32 index = this_cpu_read(saved_index);
+	u32 old_guard;
+
+	/* Otherwise, allocate a new index. */
+	if (!index)
+		index = atomic_inc_return(&kcov_guard_max_index) - 1;
+
+	/* Index cannot overflow. */
+	BUG_ON(!index);
+	/*
+	 * Make sure another task is not initializing the same guard
+	 * concurrently.
+	 */
+	old_guard = cmpxchg(guard, 0, index);
+	if (old_guard) {
+		/* We lost the race, save the index for future use. */
+		this_cpu_write(saved_index, index);
+		return old_guard;
+	} else {
+		/* We won the race, discard the saved index. */
+		this_cpu_write(saved_index, 0);
+		return index;
+	}
+}
+
 void notrace __sanitizer_cov_trace_pc_guard(u32 *guard)
 {
-	if (!check_kcov_mode(KCOV_MODE_TRACE_PC, current))
+	struct task_struct *t = current;
+	unsigned long ip = canonicalize_ip(_RET_IP_);
+	u32 pc_index;
+
+	/*
+	 * In KCOV_MODE_TRACE_PC mode, behave similarly to
+	 * __sanitizer_cov_trace_pc().
+	 */
+	if (check_kcov_mode(KCOV_MODE_TRACE_PC, t)) {
+		sanitizer_cov_write_subsequent(t->kcov_state.s.trace,
+					       t->kcov_state.s.trace_size, ip);
+		return;
+	}
+	/*
+	 * In KCOV_MODE_TRACE_UNIQUE_PC, deduplicate coverage on the fly.
+	 *
+	 * TODO: when collecting only sparse coverage (if exactly one of
+	 * t->kcov_state.s.trace or t->kcov_state.s.bitmap is NULL), there is
+	 * no easy way to snapshot the coverage map before calling
+	 * ioctl(KCOV_DISABLE), and the latter may pollute the map.
+	 * We may need a flag to atomically enable/disable coverage collection.
+	 */
+	if (!check_kcov_mode(KCOV_MODE_TRACE_UNIQUE_PC, t))
 		return;
 
-	sanitizer_cov_write_subsequent(current->kcov_state.s.trace,
-				       current->kcov_state.s.trace_size,
-				       canonicalize_ip(_RET_IP_));
+	pc_index = READ_ONCE(*guard);
+	if (!pc_index)
+		pc_index = init_pc_guard(guard);
+
+	/* Use a bitmap for coverage deduplication. */
+	if (t->kcov_state.s.bitmap) {
+		/* If this is known coverage, do not write the trace. */
+		if (likely(pc_index < t->kcov_state.s.bitmap_size))
+			if (test_and_set_bit(pc_index, t->kcov_state.s.bitmap))
+				return;
+		/* If we got here and trace is allocated, write the new PC to it. */
+		if (t->kcov_state.s.trace)
+			sanitizer_cov_write_subsequent(
+				t->kcov_state.s.trace,
+				t->kcov_state.s.trace_size, ip);
+		return;
+	}
+	/*
+	 * At this point, trace must be valid. Since there is no bitmap, use the
+	 * trace itself as a sparse array.
+	 */
+	if (pc_index < t->kcov_state.s.trace_size) {
+		t->kcov_state.s.trace[pc_index] = ip;
+	}
 }
 EXPORT_SYMBOL(__sanitizer_cov_trace_pc_guard);
 
@@ -552,6 +639,13 @@ static int kcov_get_mode(unsigned long arg)
 {
 	if (arg == KCOV_TRACE_PC)
 		return KCOV_MODE_TRACE_PC;
+	else if (arg == KCOV_TRACE_UNIQUE_PC)
+#ifdef CONFIG_KCOV_ENABLE_GUARDS
+		return KCOV_MODE_TRACE_UNIQUE_PC;
+#else
+		return -ENOTSUPP;
+
+#endif
 	else if (arg == KCOV_TRACE_CMP)
 #ifdef CONFIG_KCOV_ENABLE_COMPARISONS
 		return KCOV_MODE_TRACE_CMP;
@@ -704,10 +798,12 @@ static int kcov_ioctl_locked(struct kcov *kcov, unsigned int cmd,
 static long kcov_handle_init_buffers(struct kcov *kcov,
 				     __user struct kcov_buf_ctl *uctl)
 {
+	unsigned long num_guards =
+		&__sancov_guards_end - &__sancov_guards_start;
+	u32 total_bytes = 0, bitmap_bytes = 0, trace_bytes = 0;
 	struct kcov_buf_ctl_out ctl_out = { 0 };
 	struct kcov_buf_ctl_in ctl_in;
 	struct kcov_buf_ctl ctl;
-	u32 total_bytes = 0, trace_bytes = 0;
 	unsigned long flags;
 	void *area = NULL;
 
@@ -720,18 +816,31 @@ static long kcov_handle_init_buffers(struct kcov *kcov,
 	if (copy_from_user(&ctl_in, ctl.in, sizeof(ctl_in)))
 		return -EFAULT;
 
-	if (!(ctl_in.buf_flags & KCOV_BUF_CTL_TRACE))
-		return -EINVAL;
-	trace_bytes = ALIGN(ctl_in.trace_size * sizeof(unsigned long),
-			    L1_CACHE_BYTES);
-	ctl_out.trace_size = trace_bytes / sizeof(unsigned long);
-	ctl_out.trace_offset = 0;
-	total_bytes += trace_bytes;
+	if (ctl_in.buf_flags & KCOV_BUF_CTL_PROBE) {
+		ctl_out.pc_watermark = atomic_read(&kcov_guard_max_index);
+		ctl_out.bitmap_size = num_guards;
+		goto update_ret0;
+	}
 
+	if (ctl_in.buf_flags & KCOV_BUF_CTL_BITMAP) {
+		bitmap_bytes = ALIGN(ALIGN(ctl_in.bitmap_size, 8) >> 3,
+				     L1_CACHE_BYTES);
+		ctl_out.bitmap_size = bitmap_bytes * 8;
+		ctl_out.bitmap_offset = total_bytes;
+		total_bytes += bitmap_bytes;
+	}
+	if (ctl_in.buf_flags & KCOV_BUF_CTL_TRACE) {
+		trace_bytes = ALIGN(ctl_in.trace_size * sizeof(unsigned long),
+				    L1_CACHE_BYTES);
+		ctl_out.trace_size = trace_bytes / sizeof(unsigned long);
+		ctl_out.trace_offset = total_bytes;
+		total_bytes += trace_bytes;
+	}
+	if (!ctl_out.trace_size && !ctl_out.bitmap_size)
+		return -EINVAL;
 	total_bytes = ALIGN(total_bytes, PAGE_SIZE);
 	ctl_out.alloc_bytes = total_bytes;
-	if (!total_bytes)
-		return -EINVAL;
+	ctl_out.pc_watermark = atomic_read(&kcov_guard_max_index);
 	area = vmalloc_user(total_bytes);
 	if (area == NULL)
 		return -ENOMEM;
@@ -743,11 +852,26 @@ static long kcov_handle_init_buffers(struct kcov *kcov,
 	}
 	kcov->state.s.area = area;
 	kcov->state.s.size = total_bytes / sizeof(unsigned long);
-	kcov->state.s.trace = area;
-	kcov->state.s.trace_size = ctl_out.trace_size;
 	kcov->state.mode = KCOV_MODE_INIT;
+	if (ctl_out.trace_size) {
+		kcov->state.s.trace =
+			(unsigned long *)((char *)area + ctl_out.trace_offset);
+		kcov->state.s.trace_size = ctl_out.trace_size;
+	} else {
+		kcov->state.s.trace = NULL;
+		kcov->state.s.trace_size = 0;
+	}
+	if (ctl_out.bitmap_size) {
+		kcov->state.s.bitmap =
+			(unsigned long *)((char *)area + ctl_out.bitmap_offset);
+		kcov->state.s.bitmap_size = ctl_out.bitmap_size;
+	} else {
+		kcov->state.s.bitmap = NULL;
+		kcov->state.s.bitmap_size = 0;
+	}
 	spin_unlock_irqrestore(&kcov->lock, flags);
 
+update_ret0:
 	if (copy_to_user(ctl.out, &ctl_out, sizeof(ctl_out))) {
 		vfree(area);
 		return -EFAULT;
