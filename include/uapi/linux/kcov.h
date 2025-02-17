@@ -16,9 +16,34 @@ struct kcov_remote_arg {
 	__aligned_u64	handles[];
 };
 
+struct kcov_buf_ctl_in {
+	__u32		buf_flags;	/* See KCOV_BUF_CTL_* flags below */
+	__u32		trace_size;	/* Desired trace size (in longs) */
+	__u32		bitmap_size;	/* Bitmap size for unique coverage collection (in bits) */
+};
+
+struct kcov_buf_ctl_out {
+	__u32		alloc_bytes;	/* Total buffer size to allocate using mmap() */
+	__u32		trace_size;	/* Recommended aligned trace size (in pointers) */
+	__u32		trace_offset;	/* Trace offset from the start of the mapping */
+	__u32		bitmap_size;	/* Recommended aligned bitmap size (in bits) */
+	__u32		bitmap_offset;	/* Bitmap offset from the start of the mapping */
+	__u32		pc_watermark;	/* High mark of the current coverage. */
+};
+
+struct kcov_buf_ctl {
+	struct		kcov_buf_ctl_in *in;
+	struct		kcov_buf_ctl_out *out;
+};
+
+#define KCOV_BUF_CTL_TRACE		0x1
+#define KCOV_BUF_CTL_BITMAP		0x2
+#define KCOV_BUF_CTL_PROBE		0x10
+
 #define KCOV_REMOTE_MAX_HANDLES		0x100
 
 #define KCOV_INIT_TRACE			_IOR('c', 1, unsigned long)
+#define KCOV_INIT_BUFFERS		_IOWR('c', 20, struct kcov_buf_ctl)
 #define KCOV_ENABLE			_IO('c', 100)
 #define KCOV_DISABLE			_IO('c', 101)
 #define KCOV_REMOTE_ENABLE		_IOW('c', 102, struct kcov_remote_arg)
@@ -35,6 +60,8 @@ enum {
 	KCOV_TRACE_PC = 0,
 	/* Collecting comparison operands mode. */
 	KCOV_TRACE_CMP = 1,
+	/* Deduplicate collected PCs. */
+	KCOV_TRACE_UNIQUE_PC = 2,
 };
 
 /*

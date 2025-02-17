@@ -2,7 +2,7 @@
 #ifndef _LINUX_KCOV_H
 #define _LINUX_KCOV_H
 
-#include <linux/sched.h>
+#include <linux/kcov-state.h>
 #include <uapi/linux/kcov.h>
 
 struct task_struct;
@@ -23,22 +23,23 @@ enum kcov_mode {
 	KCOV_MODE_TRACE_CMP = 3,
 	/* The process owns a KCOV remote reference. */
 	KCOV_MODE_REMOTE = 4,
+	KCOV_MODE_TRACE_UNIQUE_PC = 5,
 };
 
-#define KCOV_IN_CTXSW	(1 << 30)
+#define KCOV_IN_CTXSW (1 << 30)
 
 void kcov_task_init(struct task_struct *t);
 void kcov_task_exit(struct task_struct *t);
 
-#define kcov_prepare_switch(t)			\
-do {						\
-	(t)->kcov_mode |= KCOV_IN_CTXSW;	\
-} while (0)
+#define kcov_prepare_switch(t)                         \
+	do {                                           \
+		(t)->kcov_state.mode |= KCOV_IN_CTXSW; \
+	} while (0)
 
-#define kcov_finish_switch(t)			\
-do {						\
-	(t)->kcov_mode &= ~KCOV_IN_CTXSW;	\
-} while (0)
+#define kcov_finish_switch(t)                           \
+	do {                                            \
+		(t)->kcov_state.mode &= ~KCOV_IN_CTXSW; \
+	} while (0)
 
 /* See Documentation/dev-tools/kcov.rst for usage details. */
 void kcov_remote_start(u64 handle);
@@ -107,6 +108,8 @@ typedef unsigned long long kcov_u64;
 #endif
 
 void __sanitizer_cov_trace_pc(void);
+void __sanitizer_cov_trace_pc_guard(u32 *guard);
+void __sanitizer_cov_trace_pc_guard_init(uint32_t *start, uint32_t *stop);
 void __sanitizer_cov_trace_cmp1(u8 arg1, u8 arg2);
 void __sanitizer_cov_trace_cmp2(u16 arg1, u16 arg2);
 void __sanitizer_cov_trace_cmp4(u32 arg1, u32 arg2);
@@ -119,23 +122,41 @@ void __sanitizer_cov_trace_switch(kcov_u64 val, void *cases);
 
 #else
 
-static inline void kcov_task_init(struct task_struct *t) {}
-static inline void kcov_task_exit(struct task_struct *t) {}
-static inline void kcov_prepare_switch(struct task_struct *t) {}
-static inline void kcov_finish_switch(struct task_struct *t) {}
-static inline void kcov_remote_start(u64 handle) {}
-static inline void kcov_remote_stop(void) {}
+static inline void kcov_task_init(struct task_struct *t)
+{
+}
+static inline void kcov_task_exit(struct task_struct *t)
+{
+}
+static inline void kcov_prepare_switch(struct task_struct *t)
+{
+}
+static inline void kcov_finish_switch(struct task_struct *t)
+{
+}
+static inline void kcov_remote_start(u64 handle)
+{
+}
+static inline void kcov_remote_stop(void)
+{
+}
 static inline u64 kcov_common_handle(void)
 {
 	return 0;
 }
-static inline void kcov_remote_start_common(u64 id) {}
-static inline void kcov_remote_start_usb(u64 id) {}
+static inline void kcov_remote_start_common(u64 id)
+{
+}
+static inline void kcov_remote_start_usb(u64 id)
+{
+}
 static inline unsigned long kcov_remote_start_usb_softirq(u64 id)
 {
 	return 0;
 }
-static inline void kcov_remote_stop_softirq(unsigned long flags) {}
+static inline void kcov_remote_stop_softirq(unsigned long flags)
+{
+}
 
 #endif /* CONFIG_KCOV */
 #endif /* _LINUX_KCOV_H */
