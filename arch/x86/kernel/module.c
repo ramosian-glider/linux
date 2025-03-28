@@ -133,6 +133,14 @@ static int __write_relocate_add(Elf64_Shdr *sechdrs,
 		case R_X86_64_PC32:
 		case R_X86_64_PLT32:
 			val -= (u64)loc;
+			if ((s64)val != *(s32 *)&val)
+				goto overflow;
+			size = 4;
+			break;
+		case R_X86_64_REX_GOTPCRELX:
+			val -= (u64)loc;
+			if ((s64)val != *(s32 *)&val)
+				goto overflow;
 			size = 4;
 			break;
 		case R_X86_64_PC64:

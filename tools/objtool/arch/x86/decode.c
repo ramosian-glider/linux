@@ -93,6 +93,7 @@ bool arch_pc_relative_reloc(struct reloc *reloc)
 	case R_X86_64_PLT32:
 	case R_X86_64_GOTPC32:
 	case R_X86_64_GOTPCREL:
+	case R_X86_64_REX_GOTPCRELX:
 		return true;
 
 	default:

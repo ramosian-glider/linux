@@ -63,6 +63,7 @@ typedef struct user_i387_struct elf_fpregset_t;
 #define R_X86_64_8		14	/* Direct 8 bit sign extended  */
 #define R_X86_64_PC8		15	/* 8 bit sign extended pc relative */
 #define R_X86_64_PC64		24	/* Place relative 64-bit signed */
+#define R_X86_64_REX_GOTPCRELX	42	/* R_X86_64_GOTPCREL with optimizations */
 
 /*
  * These are used to set parameters in the core dumps.
