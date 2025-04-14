@@ -279,44 +279,31 @@ void notrace __sanitizer_cov_trace_pc_guard(u32 *guard)
 	u32 pc_index;
 	enum kcov_mode mode = get_kcov_mode(t);
 
-	/*
-	 * In KCOV_MODE_TRACE_PC mode, behave similarly to
-	 * __sanitizer_cov_trace_pc().
-	 */
-	if (mode == KCOV_MODE_TRACE_PC) {
-		sanitizer_cov_write_subsequent(t->kcov_state.s.trace,
-					       t->kcov_state.s.trace_size, ip);
+	switch (mode) {
+	case KCOV_MODE_TRACE_UNIQUE_PC:
+		pc_index = READ_ONCE(*guard);
+		if (unlikely(!pc_index))
+			pc_index = init_pc_guard(guard);
+
+		/*
+		 * Use a bitmap for coverage deduplication. We assume both s.bitmap and
+		 * s.trace are non-NULL.
+		 *
+		 * If this is known coverage, do not write the trace.
+		 */
+		if (likely(pc_index < t->kcov_state.s.bitmap_size))
+			if (test_and_set_bit(pc_index, t->kcov_state.s.bitmap))
+				return;
+		/* If the PC is new, write it to the trace. */
+		fallthrough;
+	case KCOV_MODE_TRACE_PC:
+		sanitizer_cov_write_subsequent(
+					t->kcov_state.s.trace,
+					t->kcov_state.s.trace_size, ip);
+		break;
+	default:
 		return;
 	}
-	/*
-	 * In KCOV_MODE_TRACE_UNIQUE_PC, deduplicate coverage on the fly.
-	 *
-	 * TODO: when collecting only sparse coverage (if exactly one of
-	 * t->kcov_state.s.trace or t->kcov_state.s.bitmap is NULL), there is
-	 * no easy way to snapshot the coverage map before calling
-	 * ioctl(KCOV_DISABLE), and the latter may pollute the map.
-	 * We may need a flag to atomically enable/disable coverage collection.
-	 */
-	if (mode != KCOV_MODE_TRACE_UNIQUE_PC)
-		return;
-
-	pc_index = READ_ONCE(*guard);
-	if (unlikely(!pc_index))
-		pc_index = init_pc_guard(guard);
-
-	/*
-	 * Use a bitmap for coverage deduplication. We assume both s.bitmap and
-	 * s.trace are non-NULL.
-	 *
-	 * If this is known coverage, do not write the trace.
-	 */
-	if (likely(pc_index < t->kcov_state.s.bitmap_size))
-		if (test_and_set_bit(pc_index, t->kcov_state.s.bitmap))
-			return;
-	/* If the PC is new, write it to the trace. */
-	sanitizer_cov_write_subsequent(
-				t->kcov_state.s.trace,
-				t->kcov_state.s.trace_size, ip);
 }
 EXPORT_SYMBOL(__sanitizer_cov_trace_pc_guard);
 
