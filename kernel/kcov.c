@@ -166,30 +166,6 @@ static __always_inline bool in_softirq_really(void)
 	return in_serving_softirq() && !in_hardirq() && !in_nmi();
 }
 
-static notrace bool check_kcov_mode(enum kcov_mode needed_mode,
-				    struct task_struct *t)
-{
-	unsigned int mode;
-
-	/*
-	 * We are interested in code coverage as a function of a syscall inputs,
-	 * so we ignore code executed in interrupts, unless we are in a remote
-	 * coverage collection section in a softirq.
-	 */
-	if (!in_task() && !(in_softirq_really() && t->kcov_softirq))
-		return false;
-	mode = READ_ONCE(t->kcov_state.mode);
-	/*
-	 * There is some code that runs in interrupts but for which
-	 * in_interrupt() returns false (e.g. preempt_schedule_irq()).
-	 * READ_ONCE()/barrier() effectively provides load-acquire wrt
-	 * interrupts, there are paired barrier()/WRITE_ONCE() in
-	 * kcov_start().
-	 */
-	barrier();
-	return mode == needed_mode;
-}
-
 static notrace enum kcov_mode get_kcov_mode(struct task_struct *t)
 {
 	unsigned int mode;
@@ -230,7 +206,7 @@ static void sanitizer_cov_write_subsequent(unsigned long *trace, int size,
 
 	if (likely(pos < size)) {
 		/*
-		 * Some early interrupt code could bypass check_kcov_mode() check
+		 * Some early interrupt code could bypass get_kcov_mode() check
 		 * and invoke __sanitizer_cov_trace_pc(). If such interrupt is
 		 * raised between writing pc and updating pos, the pc could be
 		 * overitten by the recursive __sanitizer_cov_trace_pc().
@@ -249,7 +225,7 @@ static void sanitizer_cov_write_subsequent(unsigned long *trace, int size,
 #ifndef CONFIG_KCOV_ENABLE_GUARDS
 void notrace __sanitizer_cov_trace_pc(void)
 {
-	if (!check_kcov_mode(KCOV_MODE_TRACE_PC, current))
+	if (get_kcov_mode(current) != KCOV_MODE_TRACE_PC)
 		return;
 
 	sanitizer_cov_write_subsequent(current->kcov_state.s.trace,
@@ -366,7 +342,7 @@ static void notrace write_comp_data(u64 type, u64 arg1, u64 arg2, u64 ip)
 	u64 *trace;
 
 	t = current;
-	if (!check_kcov_mode(KCOV_MODE_TRACE_CMP, t))
+	if (get_kcov_mode(t) != KCOV_MODE_TRACE_CMP)
 		return;
 
 	ip = canonicalize_ip(ip);
@@ -485,7 +461,7 @@ static void kcov_start(struct task_struct *t, struct kcov *kcov,
 	/* Cache in task struct for performance. */
 	t->kcov_state.s = state->s;
 	barrier();
-	/* See comment in check_kcov_mode(). */
+	/* See comment in get_kcov_mode(). */
 	WRITE_ONCE(t->kcov_state.mode, state->mode);
 }
 
