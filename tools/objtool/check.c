@@ -1148,6 +1148,7 @@ static const char *uaccess_safe_builtin[] = {
 	/* KCOV */
 	"write_comp_data",
 	"check_kcov_mode",
+	"init_pc_guard",
 	"__sanitizer_cov_trace_pc",
 	"__sanitizer_cov_trace_pc_guard",
 	"__sanitizer_cov_trace_const_cmp1",

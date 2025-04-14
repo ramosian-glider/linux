@@ -251,18 +251,20 @@ static notrace u32 init_pc_guard(u32 *guard)
 	u32 index = this_cpu_xchg(saved_index, 0);
 	u32 old_guard;
 
-	/* Otherwise, allocate a new index. */
-	if (!index)
+	if (likely(!index))
+		/*
+		 * Otherwise, allocate a new index. We do not check for index
+		 * overflow here, because it would mean the kernel had executed
+		 * 2**32 unique basic blocks, each taking at least 8 bytes.
+		 */
 		index = atomic_inc_return(&kcov_guard_max_index) - 1;
 
-	/* Index cannot overflow. */
-	WARN_ON(!index);
 	/*
 	 * Make sure another task is not initializing the same guard
 	 * concurrently.
 	 */
 	old_guard = cmpxchg(guard, 0, index);
-	if (old_guard) {
+	if (unlikely(old_guard)) {
 		/* We lost the race, save the index for future use. */
 		this_cpu_write(saved_index, index);
 		return old_guard;
@@ -298,11 +300,11 @@ void notrace __sanitizer_cov_trace_pc_guard(u32 *guard)
 		return;
 
 	pc_index = READ_ONCE(*guard);
-	if (!pc_index)
+	if (unlikely(!pc_index))
 		pc_index = init_pc_guard(guard);
 
 	/* Use a bitmap for coverage deduplication. */
-	if (t->kcov_state.s.bitmap) {
+	if (likely(t->kcov_state.s.bitmap)) {
 		/* If this is known coverage, do not write the trace. */
 		if (likely(pc_index < t->kcov_state.s.bitmap_size))
 			if (test_and_set_bit(pc_index, t->kcov_state.s.bitmap))
