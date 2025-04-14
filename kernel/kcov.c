@@ -245,7 +245,7 @@ DEFINE_PER_CPU(u32, saved_index);
  * in an unused hole in a bitmap, but such events should not impact the overall
  * memory consumption.
  */
-static notrace u32 init_pc_guard(u32 *guard)
+static __always_inline u32 init_pc_guard(u32 *guard)
 {
 	/* If current CPU has a free index from the previous call, take it. */
 	u32 index = this_cpu_xchg(saved_index, 0);
@@ -274,10 +274,8 @@ static notrace u32 init_pc_guard(u32 *guard)
 
 void notrace __sanitizer_cov_trace_pc_guard(u32 *guard)
 {
-	struct task_struct *t = current;
-	unsigned long ip = canonicalize_ip(_RET_IP_);
 	u32 pc_index;
-	enum kcov_mode mode = get_kcov_mode(t);
+	enum kcov_mode mode = get_kcov_mode(current);
 
 	switch (mode) {
 	case KCOV_MODE_TRACE_UNIQUE_PC:
@@ -291,15 +289,15 @@ void notrace __sanitizer_cov_trace_pc_guard(u32 *guard)
 		 *
 		 * If this is known coverage, do not write the trace.
 		 */
-		if (likely(pc_index < t->kcov_state.s.bitmap_size))
-			if (test_and_set_bit(pc_index, t->kcov_state.s.bitmap))
+		if (likely(pc_index < current->kcov_state.s.bitmap_size))
+			if (test_and_set_bit(pc_index, current->kcov_state.s.bitmap))
 				return;
 		/* If the PC is new, write it to the trace. */
 		fallthrough;
 	case KCOV_MODE_TRACE_PC:
 		sanitizer_cov_write_subsequent(
-					t->kcov_state.s.trace,
-					t->kcov_state.s.trace_size, ip);
+					current->kcov_state.s.trace,
+					current->kcov_state.s.trace_size, canonicalize_ip(_RET_IP_));
 		break;
 	default:
 		return;
