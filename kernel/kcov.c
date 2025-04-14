@@ -304,26 +304,19 @@ void notrace __sanitizer_cov_trace_pc_guard(u32 *guard)
 	if (unlikely(!pc_index))
 		pc_index = init_pc_guard(guard);
 
-	/* Use a bitmap for coverage deduplication. */
-	if (likely(t->kcov_state.s.bitmap)) {
-		/* If this is known coverage, do not write the trace. */
-		if (likely(pc_index < t->kcov_state.s.bitmap_size))
-			if (test_and_set_bit(pc_index, t->kcov_state.s.bitmap))
-				return;
-		/* If we got here and trace is allocated, write the new PC to it. */
-		if (t->kcov_state.s.trace)
-			sanitizer_cov_write_subsequent(
+	/*
+	 * Use a bitmap for coverage deduplication. We assume both s.bitmap and
+	 * s.trace are non-NULL.
+	 *
+	 * If this is known coverage, do not write the trace.
+	 */
+	if (likely(pc_index < t->kcov_state.s.bitmap_size))
+		if (test_and_set_bit(pc_index, t->kcov_state.s.bitmap))
+			return;
+	/* If the PC is new, write it to the trace. */
+	sanitizer_cov_write_subsequent(
 				t->kcov_state.s.trace,
 				t->kcov_state.s.trace_size, ip);
-		return;
-	}
-	/*
-	 * At this point, trace must be valid. Since there is no bitmap, use the
-	 * trace itself as a sparse array.
-	 */
-	if (pc_index < t->kcov_state.s.trace_size) {
-		t->kcov_state.s.trace[pc_index] = ip;
-	}
 }
 EXPORT_SYMBOL(__sanitizer_cov_trace_pc_guard);
 
@@ -705,28 +698,23 @@ static long kcov_handle_unique_enable(struct kcov *kcov,
 	if (kcov->t != NULL || t->kcov != NULL)
 		return -EBUSY;
 
-	if (bitmap_words) {
-		bitmap_bytes = (u32)(bitmap_words * sizeof(unsigned long));
-		if (bitmap_bytes > kcov->state.s.size) {
-			return -EINVAL;
-		}
-		kcov->state.s.bitmap_size = bitmap_bytes * 8;
-		kcov->state.s.bitmap = kcov->state.s.area;
-		total_bytes += bitmap_bytes;
-	} else {
-		kcov->state.s.bitmap_size = 0;
-		kcov->state.s.bitmap = NULL;
+	/* Cannot use zero-sized bitmap. */
+	if (!bitmap_words)
+		return -EINVAL;
+
+	bitmap_bytes = (u32)(bitmap_words * sizeof(unsigned long));
+	if (bitmap_bytes >= kcov->state.s.size) {
+		return -EINVAL;
 	}
-	if (bitmap_bytes < kcov->state.s.size) {
-		kcov->state.s.trace_size = (kcov->state.s.size - bitmap_bytes) /
-					   sizeof(unsigned long);
-		kcov->state.s.trace =
-			(unsigned long *)((char *)kcov->state.s.area +
-					  bitmap_bytes);
-	} else {
-		kcov->state.s.trace_size = 0;
-		kcov->state.s.trace = NULL;
-	}
+	kcov->state.s.bitmap_size = bitmap_bytes * 8;
+	kcov->state.s.bitmap = kcov->state.s.area;
+	total_bytes += bitmap_bytes;
+
+	kcov->state.s.trace_size = (kcov->state.s.size - bitmap_bytes) /
+				   sizeof(unsigned long);
+	kcov->state.s.trace =
+		(unsigned long *)((char *)kcov->state.s.area +
+				  bitmap_bytes);
 
 	kcov_fault_in_area(kcov);
 	kcov->state.mode = KCOV_MODE_TRACE_UNIQUE_PC;
