@@ -190,6 +190,30 @@ static notrace bool check_kcov_mode(enum kcov_mode needed_mode,
 	return mode == needed_mode;
 }
 
+static notrace enum kcov_mode get_kcov_mode(struct task_struct *t)
+{
+	unsigned int mode;
+
+	/*
+	 * We are interested in code coverage as a function of a syscall inputs,
+	 * so we ignore code executed in interrupts, unless we are in a remote
+	 * coverage collection section in a softirq.
+	 */
+	if (!in_task() && !(in_softirq_really() && t->kcov_softirq))
+		return KCOV_MODE_INVALID;
+	mode = READ_ONCE(t->kcov_state.mode);
+	/*
+	 * There is some code that runs in interrupts but for which
+	 * in_interrupt() returns false (e.g. preempt_schedule_irq()).
+	 * READ_ONCE()/barrier() effectively provides load-acquire wrt
+	 * interrupts, there are paired barrier()/WRITE_ONCE() in
+	 * kcov_start().
+	 */
+	barrier();
+	return mode;
+}
+
+
 static notrace unsigned long canonicalize_ip(unsigned long ip)
 {
 #ifdef CONFIG_RANDOMIZE_BASE
@@ -277,12 +301,13 @@ void notrace __sanitizer_cov_trace_pc_guard(u32 *guard)
 	struct task_struct *t = current;
 	unsigned long ip = canonicalize_ip(_RET_IP_);
 	u32 pc_index;
+	enum kcov_mode mode = get_kcov_mode(t);
 
 	/*
 	 * In KCOV_MODE_TRACE_PC mode, behave similarly to
 	 * __sanitizer_cov_trace_pc().
 	 */
-	if (check_kcov_mode(KCOV_MODE_TRACE_PC, t)) {
+	if (mode == KCOV_MODE_TRACE_PC) {
 		sanitizer_cov_write_subsequent(t->kcov_state.s.trace,
 					       t->kcov_state.s.trace_size, ip);
 		return;
@@ -296,7 +321,7 @@ void notrace __sanitizer_cov_trace_pc_guard(u32 *guard)
 	 * ioctl(KCOV_DISABLE), and the latter may pollute the map.
 	 * We may need a flag to atomically enable/disable coverage collection.
 	 */
-	if (!check_kcov_mode(KCOV_MODE_TRACE_UNIQUE_PC, t))
+	if (mode != KCOV_MODE_TRACE_UNIQUE_PC)
 		return;
 
 	pc_index = READ_ONCE(*guard);
