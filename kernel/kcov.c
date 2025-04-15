@@ -189,7 +189,6 @@ static notrace enum kcov_mode get_kcov_mode(struct task_struct *t)
 	return mode;
 }
 
-
 static notrace unsigned long canonicalize_ip(unsigned long ip)
 {
 #ifdef CONFIG_RANDOMIZE_BASE
@@ -290,14 +289,15 @@ void notrace __sanitizer_cov_trace_pc_guard(u32 *guard)
 		 * If this is known coverage, do not write the trace.
 		 */
 		if (likely(pc_index < current->kcov_state.s.bitmap_size))
-			if (test_and_set_bit(pc_index, current->kcov_state.s.bitmap))
+			if (test_and_set_bit(pc_index,
+					     current->kcov_state.s.bitmap))
 				return;
 		/* If the PC is new, write it to the trace. */
 		fallthrough;
 	case KCOV_MODE_TRACE_PC:
-		sanitizer_cov_write_subsequent(
-					current->kcov_state.s.trace,
-					current->kcov_state.s.trace_size, canonicalize_ip(_RET_IP_));
+		sanitizer_cov_write_subsequent(current->kcov_state.s.trace,
+					       current->kcov_state.s.trace_size,
+					       canonicalize_ip(_RET_IP_));
 		break;
 	default:
 		return;
@@ -692,8 +692,7 @@ static long kcov_handle_unique_enable(struct kcov *kcov,
 	kcov->state.s.bitmap = kcov->state.s.area;
 	kcov->state.s.trace_size = kcov->state.s.size - bitmap_words;
 	kcov->state.s.trace =
-		((unsigned long *)kcov->state.s.area +
-				  bitmap_words);
+		((unsigned long *)kcov->state.s.area + bitmap_words);
 
 	kcov_fault_in_area(kcov);
 	kcov->state.mode = KCOV_MODE_TRACE_UNIQUE_PC;
