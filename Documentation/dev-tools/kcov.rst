@@ -169,13 +169,8 @@ This mode is enabled by the ``KCOV_UNIQUE_ENABLE`` ioctl (only available if
 Calling ``ioctl(fd, KCOV_UNIQUE_ENABLE, bitmap_size)`` carves out ``bitmap_size``
 words from those allocated by ``KCOV_INIT_TRACE`` to keep an opaque bitmap that
 prevents the kernel from storing the same PC twice. The remaining part of the
-trace is used to collect PCs, like in other modes.
-
-If ``bitmap_size`` is equal to the trace size, kcov only records the bits, but
-not the actual PCs.
-
-If ``bitmap_size`` is zero, kcov treats the whole trace as a sparse array where
-each PC occurs only once, but there can be holes between PCs.
+trace is used to collect PCs, like in other modes (this part must contain at
+least two words, like when collecting non-unique PCs).
 
 The mapping between a PC and its position in the bitmap is persistent during the
 kernel lifetime, so it is possible for the callers to directly use the bitmap
