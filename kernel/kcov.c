@@ -672,34 +672,28 @@ static inline bool kcov_check_handle(u64 handle, bool common_valid,
 static long kcov_handle_unique_enable(struct kcov *kcov,
 				      unsigned long bitmap_words)
 {
-	u32 total_bytes = 0, bitmap_bytes = 0;
-	struct task_struct *t;
+	struct task_struct *t = current;
 
 	if (!IS_ENABLED(CONFIG_KCOV_ENABLE_GUARDS))
 		return -ENOTSUPP;
 	if (kcov->state.mode != KCOV_MODE_INIT || !kcov->state.s.area)
 		return -EINVAL;
-	t = current;
 	if (kcov->t != NULL || t->kcov != NULL)
 		return -EBUSY;
 
-	/* Cannot use zero-sized bitmap. */
-	if (!bitmap_words)
+	/*
+	 * Cannot use zero-sized bitmap, also the bitmap must leave at least two
+	 * words for the trace.
+	 */
+	if ((!bitmap_words) || (bitmap_words >= (kcov->state.s.size - 1)))
 		return -EINVAL;
 
-	bitmap_bytes = (u32)(bitmap_words * sizeof(unsigned long));
-	if (bitmap_bytes >= kcov->state.s.size) {
-		return -EINVAL;
-	}
-	kcov->state.s.bitmap_size = bitmap_bytes * 8;
+	kcov->state.s.bitmap_size = bitmap_words * sizeof(unsigned long) * 8;
 	kcov->state.s.bitmap = kcov->state.s.area;
-	total_bytes += bitmap_bytes;
-
-	kcov->state.s.trace_size = (kcov->state.s.size - bitmap_bytes) /
-				   sizeof(unsigned long);
+	kcov->state.s.trace_size = kcov->state.s.size - bitmap_words;
 	kcov->state.s.trace =
-		(unsigned long *)((char *)kcov->state.s.area +
-				  bitmap_bytes);
+		((unsigned long *)kcov->state.s.area +
+				  bitmap_words);
 
 	kcov_fault_in_area(kcov);
 	kcov->state.mode = KCOV_MODE_TRACE_UNIQUE_PC;
